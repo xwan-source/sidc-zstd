@@ -160,6 +160,9 @@ struct chunk* detect_similar_chunk(struct chunk* ck) {
 		}
 		
 		basChunk = get_base_chunk_in_base_chunk_cache(&item->fp, item->id);
+		if(basChunk) {
+			printf("DEBUG: detect_similar_chunk found base chunk, id=%lld, size=%d\n", basChunk->id, basChunk->size);
+		}
 		pthread_mutex_unlock(&mutex_baseCtn);
 	}
 	pthread_mutex_unlock(&mutex_similarity);
