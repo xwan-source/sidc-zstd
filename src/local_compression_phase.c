@@ -33,12 +33,14 @@ static int compress_chunk(struct chunk* c) {
         return 0;
     }
 
-    /* 注意：即使是重复块也需要压缩，因为基块可能是重复块 */
-    /* 重复块只在存储时跳过，但压缩仍然需要进行 */
-    /* if (CHECK_CHUNK(c, CHUNK_DUPLICATE)) {
+    /* 跳过不会被存储的块（真正的重复块）
+     * c->id == TEMPORARY_ID 表示这是新块，会被存储
+     * c->id != TEMPORARY_ID 表示这是重复块，不会被存储
+     */
+    if (c->id != TEMPORARY_ID) {
         jcr.local_skipped_chunk_num++;
         return 0;
-    } */
+    }
 
     /* 太小的块不值得压缩 */
     if (c->size < LOCAL_COMPRESSION_MIN_SIZE) {
