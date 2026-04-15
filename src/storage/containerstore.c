@@ -304,12 +304,12 @@ struct container* load_container_by_id(containerid id) {
 		unser_bytes(&me->sf1, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf2, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf3, sizeof(uint64_t));						// 8B
+		unser_bytes(&me->flag, sizeof(char));							// 1B
+		unser_bytes(&me->chunk_len, sizeof(int32_t));					// 4B
 
-		me->flag = 0;
 		me->delta_size = -1;
-		if (bitmap[i >> 3] & (1 << (i & 7))){
+		if (me->flag == 1){
 			/* it is a delta */
-			me->flag = 1;
 			me->delta_size = me->data_len - sizeof(int32_t) - sizeof(containerid);
 		}
 
@@ -397,14 +397,14 @@ struct container* load_container_for_meta_and_chunk(containerid id) {
 		unser_bytes(&me->sf1, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf2, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf3, sizeof(uint64_t));						// 8B
+		unser_bytes(&me->flag, sizeof(char));							// 1B
+		unser_bytes(&me->chunk_len, sizeof(int32_t));					// 4B
 
-		me->flag = 0;
 		me->base_id = -1;
 		me->delta_size = -1;
 
-		if (bitmap[i>>3] & (1 << (i & 7))) {
+		if (me->flag == 1) {
 			/* it is a delta */
-			me->flag = 1;
 			me->delta_size = me->data_len - sizeof(int32_t) - sizeof(containerid);
 		}
 		
