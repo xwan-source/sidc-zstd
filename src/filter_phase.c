@@ -1,0 +1,333 @@
+#include "destor.h"
+#include "jcr.h"
+#include "storage/containerstore.h"
+#include "recipe/recipestore.h"
+#include "rewrite_phase.h"
+#include "backup.h"
+#include "index/index.h"
+
+
+static pthread_t filter_t;
+static int64_t chunk_num;
+
+struct{
+	/* accessed in dedup phase */
+	struct container *container_buffer;
+	/* In order to facilitate sampling in container,
+	 * we keep a queue for chunks in container buffer. */
+	GQueue *chunks;
+} storage_buffer;
+
+extern struct {
+	/* g_mutex_init() is unnecessary if in static storage. */
+	GMutex mutex;
+	GCond cond; // index buffer is not full
+	int wait_threshold;
+} index_lock;
+
+/* When a container buffer is full, we push it into container_queue. */
+static void* filter_thread(void *arg) {
+
+    struct recipeMeta* r = NULL;
+
+    while (1) {
+        struct chunk* c = sync_queue_pop(local_compression_queue);
+
+        if (c == NULL)
+            /* backup job finish */
+            break;
+
+        /* reconstruct a segment */
+        struct segment* s = new_segment();
+
+        /* segment head */
+        assert(CHECK_CHUNK(c, CHUNK_SEGMENT_START));
+        free_chunk(c);
+
+        c = sync_queue_pop(local_compression_queue);
+        while (!(CHECK_CHUNK(c, CHUNK_SEGMENT_END))) {
+            g_queue_push_tail(s->chunks, c);
+            if (!CHECK_CHUNK(c, CHUNK_FILE_START)
+                    && !CHECK_CHUNK(c, CHUNK_FILE_END))
+                s->chunk_num++;
+
+            c = sync_queue_pop(local_compression_queue);
+        }
+        free_chunk(c);
+
+		GHashTable *recently_rewritten_chunks = g_hash_table_new_full(g_int64_hash,
+        		g_fingerprint_equal, NULL, free_chunk);
+        GHashTable *recently_unique_chunks = g_hash_table_new_full(g_int64_hash,
+        			g_fingerprint_equal, NULL, free_chunk);
+
+		g_mutex_lock(&index_lock.mutex);
+
+        TIMER_DECLARE(1);
+        TIMER_BEGIN(1);
+
+		index_check_buffer(s);
+		
+        int len = g_queue_get_length(s->chunks), i;
+        for(i = 0; i < len; i++){
+            struct chunk* c = g_queue_peek_nth(s->chunks, i);
+
+    		if (CHECK_CHUNK(c, CHUNK_FILE_START) || CHECK_CHUNK(c, CHUNK_FILE_END))
+    			continue;
+
+			struct chunk* ruc = g_hash_table_lookup(recently_unique_chunks, &c->fp);
+			if(ruc) {
+				if ((CHECK_CHUNK(c, CHUNK_DUPLICATE) && c->id == TEMPORARY_ID)) { 
+					assert(ruc);
+                	c->id = ruc->id;
+                	c->base_size = ruc->base_size;
+                	c->delta_size = ruc->delta_size;
+				
+					if(ruc->delta_compressed) {
+						assert(ruc->base_id != TEMPORARY_ID);
+						c->dup_with_delta = 1;
+						SET_CHUNK(c, CHUNK_SELF_REFERENCE);
+						c->base_id = ruc->base_id;
+						memcpy(&c->base_fp, &ruc->base_fp, sizeof(fingerprint));
+					}
+				}
+				if(ruc->delta_compressed == 1) {
+					c->id = ruc->id;
+                	c->base_size = ruc->base_size;
+                	c->delta_size = ruc->delta_size;
+				
+					assert(ruc->base_id != TEMPORARY_ID);
+					c->dup_with_delta = 1;
+					SET_CHUNK(c, CHUNK_SELF_REFERENCE);
+					c->base_id = ruc->base_id;
+					memcpy(&c->base_fp, &ruc->base_fp, sizeof(fingerprint));
+				}
+				else {
+					c->id = ruc->id;
+				
+					c->dup_with_delta = 0;
+					SET_CHUNK(c, CHUNK_SELF_REFERENCE);
+				}
+					
+			}
+
+            struct chunk* rwc = g_hash_table_lookup(recently_rewritten_chunks, &c->fp);
+            if(rwc){
+            	c->id = rwc->id;
+                c->base_size = rwc->base_size;
+                c->delta_size = rwc->delta_size;
+
+				if(rwc->delta_compressed) {
+					assert(rwc->base_id != TEMPORARY_ID);
+					c->dup_with_delta = 1;
+					SET_CHUNK(c, CHUNK_SELF_REFERENCE);
+					c->base_id = rwc->base_id;
+					memcpy(&c->base_fp, &rwc->base_fp, sizeof(fingerprint));
+				}
+				else
+					c->dup_with_delta = 0;
+
+				SET_CHUNK(c, CHUNK_REWRITE_DENIED);
+            }
+
+            if (!CHECK_CHUNK(c, CHUNK_DUPLICATE)){
+                if (storage_buffer.container_buffer == NULL){
+                	storage_buffer.container_buffer = create_container();
+                	storage_buffer.chunks = g_queue_new();
+                }
+
+				if (container_overflow(storage_buffer.container_buffer, c)) {
+
+					jcr.number_of_container_stored++;
+                    GHashTable *features = sampling(storage_buffer.chunks,
+                        	g_queue_get_length(storage_buffer.chunks));
+                    index_update(features, get_container_id(storage_buffer.container_buffer));
+                    g_hash_table_destroy(features);
+                    g_queue_free_full(storage_buffer.chunks, free_chunk);
+                    storage_buffer.chunks = g_queue_new();
+					
+                    TIMER_END(1, jcr.filter_time);
+                    write_container_async(storage_buffer.container_buffer);
+                    TIMER_BEGIN(1);
+                    storage_buffer.container_buffer = create_container();
+                }
+
+				if(add_chunk_to_container(storage_buffer.container_buffer, c)) {
+
+
+					/* information collecting */
+					if(!c->delta) {
+						/* being stored as a normal chunk  */
+						if(CHECK_CHUNK(c, CHUNK_DUPLICATE)) {
+							jcr.rewritten_chunk_num++;
+							jcr.rewritten_size += c->size;
+						}
+
+						if(!CHECK_CHUNK(c, CHUNK_DUPLICATE)) {
+								jcr.unique_chunk_num++;
+
+							jcr.data_stored += c->size;
+							//jcr.total_size_for_local_compression += c->size;
+							//jcr.local_compressed_size += c->size - c->size_after_local_compression;
+						}
+					}
+					else {
+						/* being stored as a delta */
+						assert(c->delta);
+						if(CHECK_CHUNK(c, CHUNK_DUPLICATE)) {
+							jcr.rewritten_chunk_num++;
+							jcr.rewritten_size += c->delta->size;
+						}
+
+						if(!CHECK_CHUNK(c, CHUNK_DUPLICATE))
+							jcr.unique_chunk_num++;
+
+						jcr.data_stored += c->delta->size;
+						//jcr.total_size_for_delta_compression += c->size;
+						jcr.delta_compressed_size += c->size - c->delta->size;
+					}
+					/* end of collecting information */
+
+					struct chunk* wc = new_chunk(0);
+                	memcpy(&wc->fp, &c->fp, sizeof(fingerprint));
+                	wc->id = c->id;
+                    wc->base_size = c->base_size;
+                    wc->delta_size = c->delta_size;
+
+					if(!c->delta){
+						wc->delta_compressed = 0;
+
+						/* c is stored as a normal chunk */
+						assert(c->id != TEMPORARY_ID);
+
+                        if (!CHECK_CHUNK(c, CHUNK_DUPLICATE))
+                            g_hash_table_insert(recently_unique_chunks, &wc->fp, wc);
+                        else
+							g_hash_table_insert(recently_rewritten_chunks, &wc->fp, wc);
+					}
+					else {
+						/* c is stored as a delta */
+					
+                        c->base_size = c->base_chunk->size;
+                        c->delta_size = c->delta->size;
+
+						wc->delta_compressed = 1;
+						c->base_id = c->delta->base_id;
+						wc->base_id = c->base_id;
+
+						memcpy(&wc->base_fp, &c->base_fp, sizeof(fingerprint));
+						assert(c->base_id != -1);
+
+                        if (!CHECK_CHUNK(c, CHUNK_DUPLICATE))
+							g_hash_table_insert(recently_unique_chunks, &wc->fp, wc);
+						else
+							g_hash_table_insert(recently_rewritten_chunks, &wc->fp, wc);
+					}
+	
+					struct chunk* ck = new_chunk(0);
+                	memcpy(&ck->fp, &c->fp, sizeof(fingerprint));
+					ck->id = c->id;
+                	g_queue_push_tail(storage_buffer.chunks, ck);
+				}
+				else {
+					/* deduplicated chunks, we monitor chunk references */
+					if(c->dup_with_delta)
+						jcr.duplicate_delta_num++;
+					else 
+						jcr.duplicate_chunk_num++;
+					
+					jcr.deduplicated_size += c->size;
+				}
+            }
+			else {
+				/* deduplicated chunks, we monitor chunk references */
+				if(c->dup_with_delta)
+					jcr.duplicate_delta_num++;
+				else 
+					jcr.duplicate_chunk_num++;
+					
+				jcr.deduplicated_size += c->size;
+			}
+
+			//har_monitor_update(c);
+
+			/*
+			assert(c->id != TEMPORARY_ID);
+			if(c->dup_with_delta) 
+				assert(c->base_id != -1);
+			if(c->delta)
+				assert(c->delta->base_id != TEMPORARY_ID);
+			*/
+
+            chunk_num++;
+        }
+
+		int full = index_update_buffer(s);
+
+        /* Write a SEGMENT_BEGIN */
+        segmentid sid = append_segment_flag(jcr.bv, CHUNK_SEGMENT_START, s->chunk_num);
+
+        /* Write recipe */
+        int qlen = g_queue_get_length(s->chunks);
+        for(i=0; i< qlen; i++){
+        	c = g_queue_peek_nth(s->chunks, i);
+		
+        	if(r == NULL){
+        		assert(CHECK_CHUNK(c,CHUNK_FILE_START));
+        		r = new_recipe_meta(c->data);
+        	}else if(!CHECK_CHUNK(c,CHUNK_FILE_END)){
+
+        		struct chunkPointer cp;
+        		cp.id = c->id;
+        		assert(cp.id >= 0);
+        		memcpy(&cp.fp, &c->fp, sizeof(fingerprint));
+        		cp.size = c->size;
+        		append_n_chunk_pointers(jcr.bv, &cp ,1);
+        		r->chunknum++;
+        		r->filesize += c->size;
+        	}else{
+        		assert(CHECK_CHUNK(c,CHUNK_FILE_END));
+        		append_recipe_meta(jcr.bv, r);
+        		free_recipe_meta(r);
+        		r = NULL;
+        	}
+        }
+
+       	/* Write a SEGMENT_END */
+       	append_segment_flag(jcr.bv, CHUNK_SEGMENT_END, 0);
+
+        free_segment(s);
+
+        if(index_lock.wait_threshold > 0 && full == 0){
+        	g_cond_broadcast(&index_lock.cond);
+        }
+        TIMER_END(1, jcr.filter_time);
+        g_mutex_unlock(&index_lock.mutex);
+
+		g_hash_table_destroy(recently_rewritten_chunks);
+        g_hash_table_destroy(recently_unique_chunks);		
+    }
+
+    if (storage_buffer.container_buffer && !container_empty(storage_buffer.container_buffer)){
+
+		jcr.number_of_container_stored++;
+        GHashTable *features = sampling(storage_buffer.chunks,
+        		g_queue_get_length(storage_buffer.chunks));
+        index_update(features, get_container_id(storage_buffer.container_buffer));
+        g_hash_table_destroy(features);
+        g_queue_free_full(storage_buffer.chunks, free_chunk);
+        write_container_async(storage_buffer.container_buffer);
+    }
+
+	jcr.status = JCR_STATUS_DONE;
+    return NULL;
+}
+
+void start_filter_phase() {
+	init_restore_aware();
+	storage_buffer.container_buffer = NULL;
+    pthread_create(&filter_t, NULL, filter_thread, NULL);
+}
+
+void stop_filter_phase() {
+    pthread_join(filter_t, NULL);
+}

@@ -1,0 +1,3 @@
+./backup.sh /home/dataset/zyc/linux_tar/ > b_linux_tar.txt
+./restore.sh 258 > r_linux_tar.txt
+

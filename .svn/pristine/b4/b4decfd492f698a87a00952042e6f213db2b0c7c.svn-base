@@ -1,0 +1,39 @@
+/*
+ * base_container_cache.h
+ *
+ *  Created on: Aug 2, 2018
+ *      Author: Yucheng Zhang
+ */
+
+#ifndef BASE_CONTAINER_CACHE_H_
+#define BASE_CONTAINER_CACHE_H_
+
+struct sketchItem {
+    fingerprint fp;
+    uint64_t superF;
+    containerid id;
+};
+
+struct baseContainerCacheItem {
+	GHashTable* HTsketch1;
+	GHashTable* HTsketch2;
+	GHashTable* HTsketch3;
+};
+
+void free_sketchItem(struct sketchItem* item);
+void init_base_container_cache_item(struct baseContainerCacheItem* item, struct containerMeta* cm);
+void free_baseContainerCacheItem(struct baseContainerCacheItem* item);
+struct sketchItem* lookup_sketchItem_in_similarity_index(struct baseContainerCacheItem* bcci,
+									struct chunk* c);
+void init_base_container_cache();
+void close_base_container_cache();
+
+int check_cid_in_base_container_cache(containerid id);
+
+void similarity_index_cache_update(struct containerMeta* cm);
+
+struct chunk* get_base_chunk_in_base_chunk_cache(fingerprint* fp, containerid id);
+
+struct chunk* detect_similar_chunk(struct chunk* c);
+
+#endif /* BASE_CONTAINER_CACHE_H_ */

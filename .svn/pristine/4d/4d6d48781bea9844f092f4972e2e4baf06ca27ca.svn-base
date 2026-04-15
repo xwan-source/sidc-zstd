@@ -1,0 +1,58 @@
+
+#include "destor.h"
+#include "jcr.h"
+#include "backup.h"
+#include "utils/rabin_chunking.h"
+
+static pthread_t resemblance_t;
+
+static void* resemblance_thread(void *arg) {
+
+	while (1) {
+        struct chunk* c = sync_queue_pop(rewrite_queue);
+
+        if (c == NULL)
+            /* backup job finish */
+            break;
+
+        if(CHECK_CHUNK(c, CHUNK_FILE_START) 
+				|| CHECK_CHUNK(c, CHUNK_FILE_END) 
+        		|| CHECK_CHUNK(c, CHUNK_SEGMENT_START) 
+        		|| CHECK_CHUNK(c, CHUNK_SEGMENT_END)){
+        	
+        	sync_queue_push(resemblance_queue, c);
+        	continue;
+        }
+
+		if(!CHECK_CHUNK(c, CHUNK_DUPLICATE)) {
+			jcr.total_size_for_similarity_detection += c->size;
+				
+        	TIMER_DECLARE(1);
+        	TIMER_BEGIN(1);
+		
+        	if (destor.sketch_method == FINESSE)
+        		finesse_gear(c->data, c->size, c->sketches);
+        	else if(destor.sketch_method == SUPER_FEATURE)
+           		super_feature_rabin(c->data, c->size, c->sketches);
+			else if(destor.sketch_method == ODESS)
+				odessCalculation(c->data, c->size, c->sketches);
+        	TIMER_END(1, jcr.sketch_time);
+		}
+
+        sync_queue_push(resemblance_queue, c);
+    }
+    sync_queue_term(resemblance_queue);
+	
+	return NULL;
+}
+
+void start_resemblance_phase() {
+
+	resemblance_queue = sync_queue_new(2000);
+	pthread_create(&resemblance_t, NULL, resemblance_thread, NULL);
+}
+
+void stop_resemblance_phase() {
+
+	pthread_join(resemblance_t, NULL);
+}

@@ -1,0 +1,14 @@
+=== destor stat ===
+the number of live containers: 0
+the number of chunks: 24808899
+the size of data (B): 304614410240
+the size of stored data (B): 11004748900
+the size of saved data (B): 293609661340
+data reduction ratio: 0.9639, 27.6803
+the size of rewritten chunks (B): 0
+rewrite ratio: 0.0000
+deduplicated size: 168108414437, deduplicatation ratio: 2.2315
+delta compressed size: 125501246903, delta compression efficiency: inf, delta compression ratio: 0.0000
+local compressed size: 0, local compression efficiency: -nan, local compression ratio: -nan
+simulation level is NO
+=== destor stat ===

@@ -1,0 +1,37 @@
+#!/bin/sh
+
+DIR=/home/data/zyc/working/
+mkdir -p ${DIR}/recipes/
+mkdir -p ${DIR}/index/
+mkdir -p ${DIR}/rewrittenChunks/
+mkdir -p ${DIR}/sparseChunk/
+mkdir -p ${DIR}/restoreRecord/
+mkdir -p ${DIR}/delta_base_cid/
+mkdir -p ${DIR}/baseRecord/
+mkdir -p ${DIR}/denseContainers/
+
+rm -f ${DIR}/recipes/*
+rm -f ${DIR}/index/*
+rm -f ${DIR}/rewrittenChunks/*
+rm -f ${DIR}/sparseChunk/*
+rm -f ${DIR}/restoreRecord/*
+rm -f ${DIR}/delta_base_cid/*
+rm -f ${DIR}/baseRecord/*
+rm -f ${DIR}/denseContainers/*
+rm -f ${DIR}/container.pool
+rm -f ${DIR}/destor.stat
+rm -f ${DIR}/manifest
+
+#Assume mysql has no password
+mysql -uroot -p123456 $* -f <<END-OF-DATA;
+DROP DATABASE IF EXISTS destor_db;
+CREATE DATABASE destor_db;
+GRANT ALL PRIVILEGES ON destor_db.* TO destor@localhost IDENTIFIED BY '123456';
+USE destor_db;
+DROP TABLE IF EXISTS HashStore;
+CREATE TABLE HashStore(
+    fingerprint BINARY(20) PRIMARY KEY,
+    containerid BIGINT NOT NULL
+) ENGINE=MyISAM;
+END-OF-DATA
+

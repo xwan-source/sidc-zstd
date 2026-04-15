@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?><?xml-stylesheet type='text/xsl' href='_UpgradeReport_Files/UpgradeReport.xslt'?><UpgradeLog>
+<Properties><Property Name="Solution" Value="xdelta3">
+</Property><Property Name="Solution File" Value="E:\UNL-work\Program\xdelta3.0.0\xdelta3.0.0\xdelta3.sln">
+</Property><Property Name="Date" Value="2012年2月27日">
+</Property><Property Name="Time" Value="13:28:03">
+</Property></Properties><Event ErrorLevel="2" Project="xdelta3" Source="xdelta3.vcproj" Description="The following error has occurred during XML parsing:&#xA;&#xA;File: E:\UNL-work\Program\xdelta3.0.0\xdelta3.0.0\xdelta3.vcproj&#xA;Line: 9&#xA;Column: 2&#xA;Error Message:&#xA;'9.00' 违反了 '7.00 7,00 7.10 7,10 8.00 8,00' 的 enumeration 约束。&#xA;无法分析值为 '9.00' 的属性 'Version'。&#xA;&#xA;The file 'E:\UNL-work\Program\xdelta3.0.0\xdelta3.0.0\xdelta3.vcproj' has failed to load.">
+</Event><Event ErrorLevel="2" Project="xdelta3" Source="xdelta3.vcproj" Description="Project upgrade failed.">
+</Event><Event ErrorLevel="3" Project="xdelta3" Source="xdelta3.vcproj" Description="Not Converted">
+</Event></UpgradeLog>

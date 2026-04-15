@@ -1,0 +1,313 @@
+/*
+ * delta_phase.c
+ *
+ *  Created on: Jul 28, 2014
+ *      Author: fumin
+ */
+#include "destor.h"
+#include "jcr.h"
+#include "backup.h"
+#include "storage/containerstore.h"
+#include <openssl/sha.h>
+#include <openssl/md5.h>
+#include "storage/containerstore.h"
+#include "xdelta/xdelta3.h"
+#include "utils/lru_cache.h"
+#include "xdelta/Ddelta.h"
+
+#define MAXCHUNKSIZE 4096*64
+
+#define DELTASCHEME 1 //0 dDelta, 1 xDelta, 2 zdelta
+#define DELTACHECK  0  //check for restore
+#define DELTASTAGE4 0
+
+#define SLIDE1(m,fp,bufPos,buf) do{	\
+	    unsigned char om;   \
+	    u_int64_t x;	 \
+		if (++bufPos >= size)  \
+            bufPos = 0;				\
+        om = buf[bufPos];		\
+        buf[bufPos] = m;		 \
+		fp ^= U[om];	 \
+		x = fp >> shift;  \
+		fp <<= 8;		   \
+		fp |= m;		  \
+		fp ^= T[x];	 \
+}while(0)
+
+typedef unsigned int uint32_t;
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int u_int32_t;
+
+typedef unsigned long long int UINT64;
+
+extern struct{
+	/* accessed in dedup phase */
+	struct container *container_buffer;
+	/* In order to facilitate sampling in container,
+	 * we keep a queue for chunks in container buffer. */
+	GQueue *chunks;
+} storage_buffer;
+
+static pthread_t delta_t;
+
+int ComputeXDelta(struct chunk* basChunk, struct chunk* srcChunk)
+{
+	if(basChunk->size < 1024 || srcChunk->size < 512){
+        srcChunk->delta = NULL;
+		return 0;
+	}
+
+	struct chunk* base;
+	struct chunk* src;
+	if(srcChunk->inverse_encoded) {
+		src = basChunk;
+		base = srcChunk;
+	}
+	else {
+		base = basChunk;
+		src = srcChunk;
+	}
+	
+	unsigned char deltaData[128*1024];//[128*1024];
+	uint32_t dSize;
+
+#if DELTASCHEME == 1
+	//========xDelta encoding...
+	int ret = xd3_encode_memory((uint8_t*)src->data, (usize_t)src->size,
+								(uint8_t*)base->data, (usize_t)base->size,
+								(uint8_t*)deltaData, (usize_t*)&dSize,
+								(usize_t)src->size, 0);
+	if(ret != 0){
+		return 0;
+	}
+
+#endif
+	if (dSize > src->size) {
+		src->delta = NULL;
+		return 0;
+	}
+
+	srcChunk->delta = (struct delta*)malloc(sizeof(struct delta));
+	if(srcChunk->inverse_encoded) {
+		memcpy(&srcChunk->delta->base_fp, &srcChunk->fp, sizeof(fingerprint));
+		memcpy(&srcChunk->delta->fp, &basChunk->fp, sizeof(fingerprint));
+    	srcChunk->delta->base_id = -1;
+		srcChunk->base_id = -1;
+    	srcChunk->delta->base_size = srcChunk->size;
+    	srcChunk->delta->size = dSize;
+		srcChunk->delta->original_size = basChunk->size;
+    	srcChunk->delta->data = (unsigned char *)malloc(dSize);
+		memcpy(srcChunk->delta->data, deltaData, dSize);
+	}
+	else {
+		srcChunk->delta = (struct delta*)malloc(sizeof(struct delta));
+		memcpy(&srcChunk->delta->base_fp, &basChunk->fp, sizeof(fingerprint));
+    	srcChunk->delta->base_id = basChunk->id;
+		srcChunk->base_id = basChunk->id;
+    	srcChunk->delta->base_size = basChunk->size;
+    	srcChunk->delta->size = dSize;
+    	srcChunk->delta->data = (unsigned char *)malloc(dSize);
+		memcpy(srcChunk->delta->data, deltaData, dSize);
+		srcChunk->delta_size = dSize;
+	}
+
+	return 1;
+}
+
+int ComputeDDelta(struct chunk* basChunk, struct chunk* srcChunk)
+{
+	if(basChunk->size < 1024 || srcChunk->size < 512){
+        srcChunk->delta = NULL;
+		return 0;
+	}
+
+	struct chunk* base;
+	struct chunk* src;
+	if(srcChunk->inverse_encoded) {
+		base = basChunk;
+		src = srcChunk;
+	}
+	else {
+		src = basChunk;
+		base = srcChunk;
+	}
+	
+	unsigned char deltaData[128*1024];//[128*1024];
+	uint32_t dSize;
+
+#if DELTASCHEME == 1
+	//========xDelta encoding...
+	int ret = dDelta_Encode((uint8_t*)src->data, (usize_t)src->size,
+							(uint8_t*)base->data, base->size,
+							(uint8_t*)deltaData, &dSize);
+#endif
+
+	if(dSize > srcChunk->size) {
+        srcChunk->delta = NULL;
+        return 0;
+	}
+
+    srcChunk->delta = (struct delta*)malloc(sizeof(struct delta));
+    if(srcChunk->inverse_encoded) {
+		memcpy(&srcChunk->delta->base_fp, &srcChunk->fp, sizeof(fingerprint));
+		memcpy(&srcChunk->delta->fp, &basChunk->fp, sizeof(fingerprint));
+    	srcChunk->delta->base_id = -1;
+		srcChunk->base_id = -1;
+    	srcChunk->delta->base_size = srcChunk->size;
+    	srcChunk->delta->size = dSize;
+		srcChunk->delta->original_size = srcChunk->size;
+    	srcChunk->delta->data = (unsigned char *)malloc(dSize);
+		memcpy(srcChunk->delta->data, deltaData, dSize);
+	}
+	else {
+		memcpy(&srcChunk->delta->base_fp, &basChunk->fp, sizeof(fingerprint));
+		memcpy(&srcChunk->delta->fp, &srcChunk->fp, sizeof(fingerprint));
+    	srcChunk->delta->base_id = basChunk->id;
+		srcChunk->base_id = basChunk->id;
+    	srcChunk->delta->base_size = basChunk->size;
+    	srcChunk->delta->size = dSize;
+		srcChunk->delta->original_size = srcChunk->size;
+    	srcChunk->delta->data = (unsigned char *)malloc(dSize);
+		memcpy(srcChunk->delta->data, deltaData, dSize);
+	}
+
+	return 1;
+}
+
+int ComputeEDelta(struct chunk* basChunk, struct chunk* srcChunk)
+{
+	if(basChunk->size < 1024 || srcChunk->size < 512){
+        srcChunk->delta = NULL;
+		return 0;
+	}
+
+	struct chunk* base;
+	struct chunk* src;
+	if(srcChunk->inverse_encoded) {
+		base = basChunk;
+		src = srcChunk;
+	}
+	else {
+		src = basChunk;
+		base = srcChunk;
+	}
+		
+	unsigned char deltaData[128*1024];//[128*1024];
+	uint32_t dSize;
+
+#if DELTASCHEME == 1
+	//========Edelta encoding...
+	int ret = eDelta_Encode_v3((uint8_t*)src->data, (usize_t)src->size,
+								(uint8_t*)base->data, base->size,
+								(uint8_t*)deltaData, &dSize);
+#endif
+
+	if(dSize > src->size) {
+        srcChunk->delta = NULL;
+        return 0;
+	}
+
+    srcChunk->delta = (struct delta*)malloc(sizeof(struct delta));
+	if(srcChunk->inverse_encoded) {
+		memcpy(&srcChunk->delta->base_fp, &srcChunk->fp, sizeof(fingerprint));
+		memcpy(&srcChunk->delta->fp, &basChunk->fp, sizeof(fingerprint));
+    	srcChunk->delta->base_id = -1;
+		srcChunk->base_id = -1;
+    	srcChunk->delta->base_size = srcChunk->size;
+    	srcChunk->delta->size = dSize;
+		srcChunk->delta->original_size = srcChunk->size;
+    	srcChunk->delta->data = (unsigned char *)malloc(dSize);
+		memcpy(srcChunk->delta->data, deltaData, dSize);
+	}
+	else {
+		memcpy(&srcChunk->delta->base_fp, &basChunk->fp, sizeof(fingerprint));
+		memcpy(&srcChunk->delta->fp, &srcChunk->fp, sizeof(fingerprint));
+    	srcChunk->delta->base_id = basChunk->id;
+		srcChunk->base_id = basChunk->id;
+    	srcChunk->delta->base_size = basChunk->size;
+    	srcChunk->delta->size = dSize;
+		srcChunk->delta->original_size = srcChunk->size;
+    	srcChunk->delta->data = (unsigned char *)malloc(dSize);
+		memcpy(srcChunk->delta->data, deltaData, dSize);
+	}
+    
+	return 1;
+}
+
+void *delta_thread(void *arg)
+{
+    while (1) {
+        struct chunk* c = sync_queue_pop(matching_queue);
+
+        if (c == NULL)
+            /* backup job finish */
+            break;
+
+        if(CHECK_CHUNK(c, CHUNK_FILE_START) ||
+        		CHECK_CHUNK(c, CHUNK_FILE_END) ||
+        		CHECK_CHUNK(c, CHUNK_SEGMENT_START) ||
+        		CHECK_CHUNK(c, CHUNK_SEGMENT_END)){
+        	sync_queue_push(delta_queue, c);
+        	continue;
+        }
+
+        if (c->base_chunk) {
+
+			int res;
+
+			TIMER_DECLARE(1);
+            TIMER_BEGIN(1);
+			/*
+			char code[41];
+			hash2code(c->fp, code);
+			code[40] = 0;
+			if(code[0]=='1' && code[1]=='A' && code[2]=='8' && code[3]=='B' && code[4]=='B' && code[5]=='1') {
+				assert(jcr.chunk_num >= 0);
+				printf("fp: %s, chunk_num: %ld\n", code, jcr.chunk_num);
+				printf("fp: %s, data size: %ld\n", code, jcr.data_size);
+			}
+			*/
+			
+			switch(destor.delta_compression_method){
+				case EDELTA:{
+					res = ComputeEDelta(c->base_chunk, c);
+					break;
+				}
+				case DDELTA:{
+					res = ComputeDDelta(c->base_chunk, c);
+					break;
+				}
+				case XDELTA:{
+					res = ComputeXDelta(c->base_chunk, c);
+					break;
+				}
+			}
+			TIMER_END(1, jcr.delta_compression_time);
+
+			if (res) {
+                jcr.number_of_chunks_have_deltas++;
+            }
+			else {
+				c->delta = NULL;
+                free_chunk(c->base_chunk);
+                c->base_chunk = NULL;
+                jcr.unproper_delta_comp_num++;
+			}
+		}
+		sync_queue_push(delta_queue, c);
+	}
+	sync_queue_term(delta_queue);
+	return NULL;
+}
+
+void start_delta_phase() {
+    boxcar_init();
+    delta_queue = sync_queue_new(2000);
+    pthread_create(&delta_t, NULL, delta_thread, NULL);
+}
+
+void stop_delta_phase() {
+    pthread_join(delta_t, NULL);
+}

@@ -1,0 +1,162 @@
+/*
+ * base_container_cache.c
+ *
+ *  Created on: Aug 2, 2018
+ *      Author: Yucheng Zhang
+ */
+#include "../destor.h"
+#include "../backup.h"
+#include "../jcr.h"
+#include "../utils/lru_cache.h"
+#include "../storage/containerstore.h"
+#include "../rewrite_phase.h"
+#include "base_container_cache.h"
+
+
+typedef unsigned long long int UINT64;
+
+static struct lruCache * base_container_cache;
+
+static struct lruCache * similarity_index_cache;
+
+
+static pthread_mutex_t mutex_similarity;
+static pthread_mutex_t mutex_baseCtn;
+
+
+void free_sketchItem(struct sketchItem* item) {
+	free(item);
+}
+
+void init_base_container_cache_item(struct baseContainerCacheItem* item, struct containerMeta* cm) {
+
+	assert(cm->id != -1);
+	item->HTsketch1 = g_hash_table_new_full(g_int64_hash, g_superfeature_equal, NULL, free_sketchItem);
+	item->HTsketch2 = g_hash_table_new_full(g_int64_hash, g_superfeature_equal, NULL, free_sketchItem);
+	item->HTsketch3 = g_hash_table_new_full(g_int64_hash, g_superfeature_equal, NULL, free_sketchItem);
+
+	GHashTableIter iter;
+	gpointer key, value;
+
+	g_hash_table_iter_init(&iter, cm->map);
+	while (g_hash_table_iter_next(&iter, &key, &value)) {
+		struct metaEntry* me = (struct metaEntry*)value;
+		if (me->flag)
+			continue;
+
+		struct sketchItem* sk_item1 = (struct sketchItem*)malloc(sizeof(struct sketchItem));
+		struct sketchItem* sk_item2 = (struct sketchItem*)malloc(sizeof(struct sketchItem));
+		struct sketchItem* sk_item3 = (struct sketchItem*)malloc(sizeof(struct sketchItem));
+
+		memcpy(sk_item1->fp, me->fp, sizeof(fingerprint));
+		memcpy(sk_item2->fp, me->fp, sizeof(fingerprint));
+		memcpy(sk_item3->fp, me->fp, sizeof(fingerprint));
+
+		sk_item1->id = cm->id;
+		sk_item2->id = cm->id;
+		sk_item3->id = cm->id;
+
+		sk_item1->superF = me->sf1;
+		sk_item2->superF = me->sf2;
+		sk_item3->superF = me->sf3;
+
+
+		g_hash_table_replace(item->HTsketch1, &sk_item1->superF, sk_item1);
+		g_hash_table_replace(item->HTsketch2, &sk_item2->superF, sk_item2);
+		g_hash_table_replace(item->HTsketch3, &sk_item3->superF, sk_item3);
+	}
+}
+
+void free_baseContainerCacheItem(struct baseContainerCacheItem* item) {
+	g_hash_table_destroy(item->HTsketch1);
+	g_hash_table_destroy(item->HTsketch2);
+	g_hash_table_destroy(item->HTsketch3);
+	free(item);
+}
+
+struct sketchItem* lookup_sketchItem_in_similarity_index(struct baseContainerCacheItem* bcci,
+										struct chunk* c) {
+	struct sketchItem* item = 0;
+	item = g_hash_table_lookup(bcci->HTsketch1, &c->sketches->sf1);
+	if (!item) {
+		item = g_hash_table_lookup(bcci->HTsketch2, &c->sketches->sf2);
+		if (!item) {
+			item = g_hash_table_lookup(bcci->HTsketch3, &c->sketches->sf3);
+		}
+	}
+	return item;
+}
+
+void init_base_container_cache() {
+	base_container_cache = new_lru_cache(destor.base_container_num, free_container,
+			lookup_fingerprint_in_container);
+	similarity_index_cache = new_lru_cache(destor.base_container_num, free_baseContainerCacheItem,
+			lookup_sketchItem_in_similarity_index);
+
+	pthread_mutex_init(&mutex_similarity, NULL);
+	pthread_mutex_init(&mutex_baseCtn, NULL);
+}
+
+int check_cid_in_base_container_cache(containerid id) {
+	return check_lru_container_list_without_update(base_container_cache, id);
+}
+
+void similarity_index_cache_update(struct containerMeta* cm) {
+
+	struct baseContainerCacheItem* bcci = (struct baseContainerCacheItem*)malloc
+								(sizeof(struct baseContainerCacheItem));
+
+	init_base_container_cache_item(bcci, cm);
+	pthread_mutex_lock(&mutex_similarity);
+	lru_cache_insert(similarity_index_cache, bcci, NULL, NULL);
+	pthread_mutex_unlock(&mutex_similarity);
+}
+
+void close_base_container_cache() {
+	free_lru_cache(base_container_cache);
+	free_lru_cache(similarity_index_cache);
+
+	pthread_mutex_destroy(&mutex_similarity);
+	pthread_mutex_destroy(&mutex_baseCtn);
+}
+
+struct chunk* get_base_chunk_in_base_chunk_cache(fingerprint* fp, containerid id) {
+    struct container *con = NULL;
+    struct chunk* ck = NULL;
+
+	//assert(check_lru_container_list(base_container_cache, id));
+	con = lru_cache_lookup(base_container_cache, fp);
+    ck = get_base_chunk_in_container(con, fp);
+    assert(ck);
+	assert(ck->id != -1);
+	
+    return ck;
+}
+
+struct chunk* detect_similar_chunk(struct chunk* ck) {
+	struct sketchItem* item = 0;
+	struct chunk* basChunk = NULL;
+	struct baseContainerCacheItem* bcci = NULL;
+	
+	pthread_mutex_lock(&mutex_similarity);
+	jcr.base_container_cache_miss++;
+	bcci = lru_cache_lookup(similarity_index_cache, ck);
+	if(bcci) {
+		item = lookup_sketchItem_in_similarity_index(bcci, ck);
+		assert(item);
+
+		pthread_mutex_lock(&mutex_baseCtn);
+		int res = check_cid_in_base_container_cache(item->id);
+		if (!res) {
+			struct container* ctn = load_container_by_id(item->id);
+			assert(ctn);
+			lru_cache_insert(base_container_cache, ctn, NULL, NULL);
+		}
+
+		basChunk = get_base_chunk_in_base_chunk_cache(&item->fp, item->id);
+		thread_mutex_unlock(&mutex_baseCtn);
+	}
+	pthread_mutex_unlock(&mutex_similarity);
+	
+	return basChunk;
+}

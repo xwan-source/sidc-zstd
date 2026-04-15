@@ -1,0 +1,173 @@
+/*
+ * jcr.cpp
+ *
+ *  Created on: Feb 15, 2012
+ *      Author: fumin
+ */
+
+#include "jcr.h"
+
+void init_jcr(char *path) {
+	jcr.path = sdsnew(path);
+
+	struct stat s;
+	if (stat(path, &s) != 0) {
+		fprintf(stderr, "backup path does not exist!");
+		exit(1);
+	}
+	if (S_ISDIR(s.st_mode) && jcr.path[sdslen(jcr.path) - 1] != '/')
+		jcr.path = sdscat(jcr.path, "/");
+
+	jcr.bv = NULL;
+
+	jcr.id = TEMPORARY_ID;
+
+	jcr.status = JCR_STATUS_INIT;
+
+	jcr.file_num = 0;
+	jcr.data_size = 0;
+	jcr.delta_chunk_num = 0;
+	jcr.data_stored = 0;
+	jcr.chunk_num = 0;
+	jcr.normal_chunk_num = 0;
+	jcr.zero_chunk_num = 0;
+	jcr.zero_chunk_size = 0;
+	
+	jcr.rewritten_size = 0;
+
+    jcr.rewritten_base_chunk_num = 0;
+    jcr.rewritten_base_chunk_size = 0;
+
+    jcr.container_num_before_backup = 0;
+    jcr.container_num_stored = 0;
+    jcr.container_num_after_backup = 0;
+
+
+    jcr.total_container_num_referred = 0;
+	jcr.sparse_container_num = 0;
+	jcr.inherited_sparse_num = 0;
+
+    jcr.base_chunk_referred = 0;
+    jcr.base_container_referenced = 0;
+	jcr.deduplication_container_referenced = 0;
+
+    jcr.container_num_of_first_backup = 0;
+    jcr.base_container_in_sparse = 0;
+    jcr.base_chunk_in_sparse_container = 0;
+
+	jcr.total_time = 0;
+	/*
+	 * the time consuming of the whole backup phase
+	 */
+	jcr.read_time = 0;
+	jcr.chunk_time = 0;
+	jcr.hash_time = 0;
+	jcr.dedup_time = 0;
+	jcr.rewrite_time = 0;
+	jcr.filter_time = 0;
+	jcr.write_time = 0;
+	jcr.local_compression_time = 0;
+	jcr.container_utilization_computation_time = 0;
+
+	/*
+	 * the time consuming of three restore phase
+	 */
+	jcr.read_recipe_time = 0;
+	jcr.read_chunk_time = 0;
+	jcr.write_chunk_time = 0;
+    jcr.sketch_time = 0;
+	jcr.delta_compression_time = 0;
+
+	jcr.read_container_num = 0;
+
+    jcr.number_of_chunks_have_deltas = 0;
+	jcr.unique_chunk_num = 0;
+
+	jcr.detected_duplicate_delta_num = 0;
+    jcr.duplicate_delta_num = 0;
+	jcr.duplicate_chunk_num = 0;
+
+    jcr.delta_compression_times = 0;
+    jcr.read_normal_chunks = 0;
+    jcr.read_base_chunks = 0;
+	
+    jcr.hit_normal_chunks = 0;
+    jcr.hit_base_chunks = 0;
+    jcr.hit_sparse_base_cid = 0;
+    jcr.miss_sparse_base_cid = 0;
+
+	jcr.deduplicated_size = 0;
+    jcr.delta_compressed_size = 0;
+	jcr.local_compressed_size =0;
+
+	jcr.inversed_delta_size = 0;
+	jcr.target_size_for_inversed_compression = 0;
+	
+    jcr.unproper_delta_comp_num = 0;
+	
+    jcr.total_size_for_similarity_detection = 0;
+	jcr.total_size_for_delta_compression = 0;
+
+	jcr.chunk_size_before_local_compression = 0;
+	
+    jcr.sketch_replace_time = 0;
+    jcr.sketch_index_item_num = 0;
+
+	jcr.prefetch_index_times = 0;
+	jcr.prefetch_index_time = 0;
+	jcr.prefetch_index_size = 0;
+
+	jcr.prefetch_base_times = 0;
+	jcr.prefetch_base_time = 0;
+	jcr.prefetch_base_size = 0;
+
+	jcr.mysql_lookup_time = 0;
+	jcr.mysql_lookup_times = 0;
+
+	jcr.disk_lookup_num = 0;
+	jcr.time_to_read_base_container = 0;
+
+	jcr.number_of_container_stored = 0;
+
+
+	jcr.base_container_cache_hits = 0;
+	jcr.base_container_cache_miss = 0;
+
+	jcr.sketch_lookup_time = 0;
+	jcr.sketch_lookup_size = 0;
+
+	jcr.self_referenced_num = 0;
+
+	jcr.base_chunk_in_fcache = 0;
+
+	jcr.rewritten_chunk_num = 0;
+	jcr.delta_compressed_chunk_num =0;
+	jcr.inversed_compressed_chunk_num =0;
+
+	jcr.prefetched_dense_base_container_num = 0;
+	jcr.prefetched_sparse_base_container_num = 0;
+}
+
+void init_backup_jcr(char *path) {
+
+	init_jcr(path);
+
+	jcr.bv = create_backup_version(jcr.path);
+
+	jcr.id = jcr.bv->bv_num;
+    jcr.container_num_before_backup = get_container_count();
+}
+
+void init_restore_jcr(int revision, char *path) {
+
+	init_jcr(path);
+
+	jcr.bv = open_backup_version(revision);
+
+	if(jcr.bv->deleted == 1){
+		WARNING("The backup has been deleted!");
+		exit(1);
+	}
+
+	jcr.id = revision;
+}
