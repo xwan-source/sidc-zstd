@@ -20,9 +20,10 @@
 
 /*
  * a CONTAINER_META_ENTRY consists of 20 bytes fp, 4 bytes offset, 4 bytes length,
- * 20 bytes base_fp, and 4 bytes base_size
+ * 20 bytes base_fp, 4 bytes base_size, 8 bytes sf1, 8 bytes sf2, 8 bytes sf3,
+ * 1 byte flag, and 4 bytes chunk_len (original size for local compression)
  */
-#define CONTAINER_META_ENTRY 76
+#define CONTAINER_META_ENTRY 81
 
 struct containerMeta {
 	containerid id;

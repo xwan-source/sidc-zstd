@@ -149,10 +149,12 @@ void write_container(struct container* c) {
 		ser_bytes(&me->offset, sizeof(int32_t));						// 4B
 		ser_bytes(&me->data_len, sizeof(int32_t));						// 4B
 		ser_bytes(&me->base_fp, sizeof(fingerprint));					// 20B
-		ser_bytes(&me->base_size, sizeof(int32_t));						// 4B
+		ser_bytes(&me->base_size, sizeof(int32_t));					// 4B
 		ser_bytes(&me->sf1, sizeof(uint64_t));							// 8B
 		ser_bytes(&me->sf2, sizeof(uint64_t));							// 8B
 		ser_bytes(&me->sf3, sizeof(uint64_t));							// 8B
+		ser_bytes(&me->flag, sizeof(char));							// 1B
+		ser_bytes(&me->chunk_len, sizeof(int32_t));						// 4B
 
 		if(me->flag)
 			mark_bitmap(bitmap, n);
@@ -238,14 +240,14 @@ struct containerMeta* load_container_meta_by_id(containerid id) {
 		unser_bytes(&me->sf1, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf2, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf3, sizeof(uint64_t));						// 8B
+		unser_bytes(&me->flag, sizeof(char));							// 1B
+		unser_bytes(&me->chunk_len, sizeof(int32_t));					// 4B
 
-		me->flag = 0;
         me->delta_size = -1;
 
-		if (bitmap[i>>3] & (1 << (i & 7))) {
+		if (me->flag == 1) {
 			/* it is a delta */
-			me->flag = 1;
-			me->delta_size = me->data_len - 12;
+			me->delta_size = me->data_len - sizeof(int32_t) - sizeof(containerid);
 		}
 
 		g_hash_table_insert(cm->map, &me->fp, me);
