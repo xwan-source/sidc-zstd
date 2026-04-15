@@ -5,7 +5,8 @@
 #include "../destor.h"
 #include "../common.h"
 #include "../index/index.h"
-//#include <zstd.h>
+#include "../local_compression_phase.h"
+#include <zstd.h>
 
 
 static int64_t container_count = 0;
@@ -489,7 +490,7 @@ struct chunk* get_chunk_in_container(struct container* c, fingerprint *fp) {
 
 	//printf("cid: %d, offset: %d, a %s, data lenght: %d\n", c->meta.id, me->offset, (me->flag == 1)?"delta":"chunk", me->data_len);
 
-	if(me->flag){
+	if(me->flag == 1){
 		/* A delta */
 		int32_t chunk_size = 0;
 		int32_t delta_size = me->data_len - sizeof(int32_t) - sizeof(containerid);
@@ -512,8 +513,38 @@ struct chunk* get_chunk_in_container(struct container* c, fingerprint *fp) {
 		ck->base_size = ck->delta->base_size;
 		ck->base_id = ck->delta->base_id;
 	}
-	else {
+	else if (me->flag == 2) {
+		/* 本地压缩的普通 chunk */
+		int32_t compressed_size = me->data_len;
+		int32_t original_size = me->chunk_len;  /* chunk_len 存储原始大小 */
 
+		/* 分配解压缓冲区 */
+		unsigned char* decompressed_data = (unsigned char*)malloc(original_size);
+		if (decompressed_data == NULL) {
+			fprintf(stderr, "Failed to allocate memory for decompression\n");
+			exit(1);
+		}
+
+		/* 从 container 读取压缩数据 */
+		unsigned char* compressed_data = c->data + me->offset;
+
+		/* 使用 zstd 解压 */
+		int decompressed_len = zstd_decompress(compressed_data, compressed_size,
+		                          decompressed_data, original_size);
+		if (decompressed_len != original_size) {
+			fprintf(stderr, "ZSTD decompression failed: expected=%d, got=%d\n",
+			        original_size, decompressed_len);
+			free(decompressed_data);
+			exit(1);
+		}
+
+		/* 创建 chunk */
+		ck = new_chunk(original_size);
+		memcpy(ck->data, decompressed_data, original_size);
+		free(decompressed_data);
+	}
+	else {
+		/* 未压缩的普通 chunk (flag == 0) */
 		int32_t chunk_size = me->data_len;
 		ck = new_chunk(chunk_size);
 	
@@ -618,7 +649,16 @@ int add_chunk_to_container(struct container* c, struct chunk* ck) {
     	me->delta_size = 0;
     	me->base_size = 0;
 
-		me->flag = 0;
+		/* 检查是否经过本地压缩 */
+		if (ck->size_after_local_compression > 0 && ck->size_after_local_compression > ck->size) {
+			/* 这是本地压缩的 chunk，使用 flag=2 */
+			me->flag = 2;
+			me->chunk_len = ck->size_after_local_compression;  /* 存储原始大小 */
+		} else {
+			/* 未压缩的普通 chunk */
+			me->flag = 0;
+			me->chunk_len = 0;
+		}
 		
 		me->sf1 = ck->sketches->sf1;
 		me->sf2 = ck->sketches->sf2;
