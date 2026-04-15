@@ -94,6 +94,10 @@ void do_backup(char *path) {
 					0,
 			jcr.data_size
 					/ (double) (jcr.data_size - jcr.deduplicated_size));
+	printf("local compression stats: compressed_chunks=%lld, uncompressed_chunks=%lld, skipped_chunks=%lld\n",
+			jcr.local_compressed_chunk_num, jcr.local_uncompressed_chunk_num, jcr.local_skipped_chunk_num);
+	printf("local compression size: before=%lld, saved=%lld\n",
+			jcr.chunk_size_before_local_compression, jcr.local_compressed_size);
 	printf("data reduction ratio after local compression: %.4f, %.4f\n",
 			jcr.data_size != 0 ?
 					(jcr.deduplicated_size + jcr.local_compressed_size)
