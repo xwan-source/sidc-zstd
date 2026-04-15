@@ -182,8 +182,13 @@ static void* filter_thread(void *arg) {
 							jcr.unique_chunk_num++;
 
 						jcr.data_stored += c->delta->size;
-						jcr.total_size_for_delta_compression += c->size;
-						jcr.delta_compressed_size += c->size - c->delta->size;
+						/* 使用原始大小统计 delta compression，而不是本地压缩后的大小 */
+						int original_size = c->size;
+						if (c->size_after_local_compression > 0 && c->size_after_local_compression > c->size) {
+							original_size = c->size_after_local_compression;
+						}
+						jcr.total_size_for_delta_compression += original_size;
+						jcr.delta_compressed_size += original_size - c->delta->size;
 					}
 					/* end of collecting information */
 
