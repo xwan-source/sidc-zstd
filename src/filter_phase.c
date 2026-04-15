@@ -229,14 +229,21 @@ static void* filter_thread(void *arg) {
                 	g_queue_push_tail(storage_buffer.chunks, ck);
 				}
 				else {
-					/* deduplicated chunks, we monitor chunk references */
-					if(c->dup_with_delta)
-						jcr.duplicate_delta_num++;
-					else 
-						jcr.duplicate_chunk_num++;
-					
-					jcr.deduplicated_size += c->size;
+				/* deduplicated chunks, we monitor chunk references */
+				if(c->dup_with_delta)
+					jcr.duplicate_delta_num++;
+				else 
+					jcr.duplicate_chunk_num++;
+				
+				/* 如果该 chunk 被本地压缩过，需要调整 local_compressed_size */
+				if (c->size_after_local_compression > 0 && c->size_after_local_compression > c->size) {
+					/* 这个 chunk 被本地压缩过，需要从 local_compressed_size 中减去节省的大小 */
+					jcr.local_compressed_size -= (c->size_after_local_compression - c->size);
+					jcr.chunk_size_before_local_compression -= c->size_after_local_compression;
 				}
+				
+				jcr.deduplicated_size += c->size;
+			}
             }
 			else {
 				/* deduplicated chunks, we monitor chunk references */
@@ -244,7 +251,14 @@ static void* filter_thread(void *arg) {
 					jcr.duplicate_delta_num++;
 				else 
 					jcr.duplicate_chunk_num++;
-					
+				
+				/* 如果该 chunk 被本地压缩过，需要调整 local_compressed_size */
+				if (c->size_after_local_compression > 0 && c->size_after_local_compression > c->size) {
+					/* 这个 chunk 被本地压缩过，需要从 local_compressed_size 中减去节省的大小 */
+					jcr.local_compressed_size -= (c->size_after_local_compression - c->size);
+					jcr.chunk_size_before_local_compression -= c->size_after_local_compression;
+				}
+				
 				jcr.deduplicated_size += c->size;
 			}
 
