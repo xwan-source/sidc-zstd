@@ -103,8 +103,10 @@ void do_backup(char *path) {
 					(jcr.deduplicated_size + jcr.local_compressed_size)
 							/ (double) (jcr.data_size) :
 					0,
-			jcr.data_size
-					/ (double) (jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size));
+			jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size > 0 ?
+					jcr.data_size
+							/ (double) (jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size) :
+					0);
 	printf("delta compression stats: chunks=%lld, before=%lld, saved=%lld\n",
 			jcr.delta_compressed_chunk_num, jcr.total_size_for_delta_compression, jcr.delta_compressed_size);
 	printf("data reduction ratio after delta compression: %.4f, %.4f\n",
@@ -112,8 +114,10 @@ void do_backup(char *path) {
 					(jcr.deduplicated_size + jcr.local_compressed_size + jcr.delta_compressed_size)
 							/ (double) (jcr.data_size) :
 					0,
-			jcr.data_size
-					/ (double) (jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size - jcr.delta_compressed_size));
+			jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size - jcr.delta_compressed_size > 0 ?
+					jcr.data_size
+							/ (double) (jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size - jcr.delta_compressed_size) :
+					0);
 
     printf("unproper delta compression number: %d\n", jcr.unproper_delta_comp_num);
 	printf("number of rewritten chunks: %d\n", jcr.rewritten_chunk_num);
