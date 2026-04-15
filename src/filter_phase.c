@@ -182,7 +182,7 @@ static void* filter_thread(void *arg) {
 							jcr.unique_chunk_num++;
 
 						jcr.data_stored += c->delta->size;
-						//jcr.total_size_for_delta_compression += c->size;
+						jcr.total_size_for_delta_compression += c->size;
 						jcr.delta_compressed_size += c->size - c->delta->size;
 					}
 					/* end of collecting information */
