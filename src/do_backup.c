@@ -119,6 +119,11 @@ void do_backup(char *path) {
 							/ (double) (jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size - jcr.delta_compressed_size) :
 					0);
 
+	/* 调试：检查统计是否一致 */
+	int64_t calculated_stored = jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size - jcr.delta_compressed_size;
+	printf("debug: data_stored=%lld, calculated=%lld, diff=%lld\n",
+			jcr.data_stored, calculated_stored, jcr.data_stored - calculated_stored);
+
     printf("unproper delta compression number: %d\n", jcr.unproper_delta_comp_num);
 	printf("number of rewritten chunks: %d\n", jcr.rewritten_chunk_num);
 
