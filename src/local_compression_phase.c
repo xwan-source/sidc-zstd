@@ -7,7 +7,7 @@
 static pthread_t local_compression_t;
 
 /* 本地压缩阈值：小于此大小的块不压缩 */
-#define LOCAL_COMPRESSION_MIN_SIZE 2
+#define LOCAL_COMPRESSION_MIN_SIZE 256
 
 /* zstd 压缩级别 */
 #define ZSTD_COMPRESSION_LEVEL 3
@@ -76,16 +76,13 @@ static int compress_chunk(struct chunk* c) {
         free(c->data);
 
         /* 设置压缩后的数据 */
-        c->data = malloc(compressed_size);
-        memcpy(c->data, compressed_buffer, compressed_size);
+        c->data = compressed_buffer;
         c->size = compressed_size;
-        c->local_compressed_contents = c->data;
+        /* 注意：不要设置 local_compressed_contents，避免重复释放 */
         c->size_after_local_compression = original_size;  /* 存储原始大小 */
 
         /* 统计压缩节省的大小 */
         jcr.local_compressed_size += (original_size - compressed_size);
-
-        free(compressed_buffer);
     } else {
         /* 压缩后反而更大，不使用压缩数据 */
         free(compressed_buffer);
