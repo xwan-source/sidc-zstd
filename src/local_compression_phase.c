@@ -33,12 +33,12 @@ static int compress_chunk(struct chunk* c) {
         return 0;
     }
 
-    /* 跳过重复块（去重块） */
-    if (CHECK_CHUNK(c, CHUNK_DUPLICATE)) {
+    /* 注意：即使是重复块也需要压缩，因为基块可能是重复块 */
+    /* 重复块只在存储时跳过，但压缩仍然需要进行 */
+    /* if (CHECK_CHUNK(c, CHUNK_DUPLICATE)) {
         jcr.local_skipped_chunk_num++;
-        printf("DEBUG: skip duplicate chunk, fp=%02x%02x...\n", c->fp.hash[0], c->fp.hash[1]);
         return 0;
-    }
+    } */
 
     /* 太小的块不值得压缩 */
     if (c->size < LOCAL_COMPRESSION_MIN_SIZE) {
