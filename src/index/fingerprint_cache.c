@@ -79,9 +79,6 @@ int64_t delta_fingerprint_cache_lookup(struct chunk* c){
 			struct containerMeta* base_cm = lru_cache_lookup_without_update(lru_queue, &me->base_fp);
 			if (base_cm) {
 				struct metaEntry* base_me = g_hash_table_lookup(base_cm->map, &me->base_fp);
-				if(base_me) {
-					printf("DEBUG: base_me->flag=%d, base_cm->id=%lld\n", base_me->flag, base_cm->id);
-				}
         		if(base_me && (base_me->flag == 0 || base_me->flag == 2)) {
 					assert(base_cm->id != -1);
 					c->base_id = base_cm->id;
