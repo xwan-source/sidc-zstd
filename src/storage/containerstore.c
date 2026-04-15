@@ -567,37 +567,60 @@ struct chunk* get_base_chunk_in_container(struct container* c, fingerprint *fp) 
 
 	struct metaEntry* me = get_meta_entry_in_container_meta(&c->meta, fp);
 	assert(me);
-    assert(me->flag == 0);
 
 	struct chunk* ck = NULL;
-	/*
-	char code[41];
-	hash2code(*fp, code);
-	code[40] = 0;
-	*/
-	//printf("cid: %d, offset: %d, a base, data lenght: %d\n", c->meta.id, me->offset, me->data_len);
-	/*
-	int32_t rSize = ZSTD_getFrameContentSize(c->data + me->offset, me->data_len);
-	assert(rSize != ZSTD_CONTENTSIZE_ERROR);
-    assert(rSize != ZSTD_CONTENTSIZE_UNKNOWN);
-	unsigned char* restoreBuffer = malloc(rSize);
 
-	int32_t dSize = ZSTD_decompress(restoreBuffer, rSize, 
-						c->data + me->offset, me->data_len);
-	assert(!ZSTD_isError(dSize));
-	*/
-	ck = new_chunk(me->data_len);
-	
-	unser_declare;
-	unser_begin(c->data + me->offset, 0);
-	unser_bytes(ck->data, me->data_len);
-	unser_end(c->data + me->offset, me->data_len);
-	
+	if (me->flag == 2) {
+		/* 本地压缩的普通 chunk，需要解压缩 */
+		int32_t compressed_size = me->data_len;
+		int32_t original_size = me->chunk_len;  /* chunk_len 存储原始大小 */
+
+		/* 分配解压缓冲区 */
+		unsigned char* decompressed_data = (unsigned char*)malloc(original_size);
+		if (decompressed_data == NULL) {
+			fprintf(stderr, "Failed to allocate memory for base chunk decompression\n");
+			exit(1);
+		}
+
+		/* 从 container 读取压缩数据 */
+		unsigned char* compressed_data = c->data + me->offset;
+
+		/* 使用 zstd 解压 */
+		int decompressed_len = zstd_decompress(compressed_data, compressed_size,
+		                          decompressed_data, original_size);
+		if (decompressed_len != original_size) {
+			fprintf(stderr, "ZSTD decompression failed for base chunk: expected=%d, got=%d\n",
+			        original_size, decompressed_len);
+			free(decompressed_data);
+			exit(1);
+		}
+
+		/* 创建 chunk */
+		ck = new_chunk(original_size);
+		memcpy(ck->data, decompressed_data, original_size);
+		free(decompressed_data);
+
+		ck->target_size_for_inversed_compression = original_size;
+	} else if (me->flag == 0) {
+		/* 未压缩的普通 chunk (flag == 0) */
+		int32_t chunk_size = me->data_len;
+		ck = new_chunk(chunk_size);
+
+		unser_declare;
+		unser_begin(c->data + me->offset, 0);
+		unser_bytes(ck->data, chunk_size);
+		unser_end(c->data + me->offset, chunk_size);
+
+		ck->target_size_for_inversed_compression = chunk_size;
+	} else {
+		/* 差量块不能作为基块 */
+		fprintf(stderr, "Error: delta chunk cannot be used as base chunk (flag=%d)\n", me->flag);
+		exit(1);
+	}
+
 	memcpy(&ck->fp, fp, sizeof(fingerprint));
 	ck->id = c->meta.id;
 	assert(ck->id != -1);
-
-	ck->target_size_for_inversed_compression = me->data_len;
 
 	return ck;
 }
