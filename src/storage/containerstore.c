@@ -570,51 +570,48 @@ struct chunk* get_base_chunk_in_container(struct container* c, fingerprint *fp) 
 
 	struct chunk* ck = NULL;
 
-	if (me->flag == 0) {
-		/* 普通 chunk，可能需要解压缩 */
-		if (me->chunk_len > 0) {
-			/* chunk_len > 0 表示数据被压缩了，需要解压缩 */
-			int32_t compressed_size = me->data_len;
-			int32_t original_size = me->chunk_len;  /* chunk_len 存储原始大小 */
+	if (me->flag == 2) {
+		/* 本地压缩的普通 chunk，需要解压缩 */
+		int32_t compressed_size = me->data_len;
+		int32_t original_size = me->chunk_len;  /* chunk_len 存储原始大小 */
 
-			/* 分配解压缓冲区 */
-			unsigned char* decompressed_data = (unsigned char*)malloc(original_size);
-			if (decompressed_data == NULL) {
-				fprintf(stderr, "Failed to allocate memory for base chunk decompression\n");
-				exit(1);
-			}
-
-			/* 从 container 读取压缩数据 */
-			unsigned char* compressed_data = c->data + me->offset;
-
-			/* 使用 zstd 解压 */
-			int decompressed_len = zstd_decompress(compressed_data, compressed_size,
-			                          decompressed_data, original_size);
-			if (decompressed_len != original_size) {
-				fprintf(stderr, "ZSTD decompression failed for base chunk: expected=%d, got=%d\n",
-				        original_size, decompressed_len);
-				free(decompressed_data);
-				exit(1);
-			}
-
-			/* 创建 chunk */
-			ck = new_chunk(original_size);
-			memcpy(ck->data, decompressed_data, original_size);
-			free(decompressed_data);
-
-			ck->target_size_for_inversed_compression = original_size;
-		} else {
-			/* chunk_len == 0 表示数据未被压缩，直接使用 */
-			int32_t chunk_size = me->data_len;
-			ck = new_chunk(chunk_size);
-
-			unser_declare;
-			unser_begin(c->data + me->offset, 0);
-			unser_bytes(ck->data, chunk_size);
-			unser_end(c->data + me->offset, chunk_size);
-
-			ck->target_size_for_inversed_compression = chunk_size;
+		/* 分配解压缓冲区 */
+		unsigned char* decompressed_data = (unsigned char*)malloc(original_size);
+		if (decompressed_data == NULL) {
+			fprintf(stderr, "Failed to allocate memory for base chunk decompression\n");
+			exit(1);
 		}
+
+		/* 从 container 读取压缩数据 */
+		unsigned char* compressed_data = c->data + me->offset;
+
+		/* 使用 zstd 解压 */
+		int decompressed_len = zstd_decompress(compressed_data, compressed_size,
+		                          decompressed_data, original_size);
+		if (decompressed_len != original_size) {
+			fprintf(stderr, "ZSTD decompression failed for base chunk: expected=%d, got=%d\n",
+			        original_size, decompressed_len);
+			free(decompressed_data);
+			exit(1);
+		}
+
+		/* 创建 chunk */
+		ck = new_chunk(original_size);
+		memcpy(ck->data, decompressed_data, original_size);
+		free(decompressed_data);
+
+		ck->target_size_for_inversed_compression = original_size;
+	} else if (me->flag == 0) {
+		/* 未压缩的普通 chunk (flag == 0) */
+		int32_t chunk_size = me->data_len;
+		ck = new_chunk(chunk_size);
+
+		unser_declare;
+		unser_begin(c->data + me->offset, 0);
+		unser_bytes(ck->data, chunk_size);
+		unser_end(c->data + me->offset, chunk_size);
+
+		ck->target_size_for_inversed_compression = chunk_size;
 	} else {
 		/* 差量块不能作为基块 */
 		fprintf(stderr, "Error: delta chunk cannot be used as base chunk (flag=%d)\n", me->flag);
@@ -677,41 +674,23 @@ int add_chunk_to_container(struct container* c, struct chunk* ck) {
     	me->delta_size = 0;
     	me->base_size = 0;
 
-		/* 普通块使用 zstd 压缩存储 */
-		me->flag = 0;
+		/* 检查是否经过本地压缩 */
+		if (ck->size_after_local_compression > 0 && ck->size_after_local_compression > ck->size) {
+			/* 这是本地压缩的 chunk，使用 flag=2 */
+			me->flag = 2;
+			me->chunk_len = ck->size_after_local_compression;  /* 存储原始大小 */
+		} else {
+			/* 未压缩的普通 chunk */
+			me->flag = 0;
+			me->chunk_len = 0;
+		}
+		
 		me->sf1 = ck->sketches->sf1;
 		me->sf2 = ck->sketches->sf2;
 		me->sf3 = ck->sketches->sf3;
 
-		/* 使用 zstd 压缩数据 */
-		size_t const compressed_buff_size = ZSTD_compressBound(ck->size);
-		void* compressed_buffer = malloc(compressed_buff_size);
-		if (compressed_buffer == NULL) {
-			fprintf(stderr, "Failed to allocate memory for container compression\n");
-			exit(1);
-		}
-
-		size_t const compressed_size = ZSTD_compress(compressed_buffer, compressed_buff_size,
-		                                              ck->data, ck->size, 3);
-		if (ZSTD_isError(compressed_size)) {
-			fprintf(stderr, "ZSTD compression failed in container: %s\n", ZSTD_getErrorName(compressed_size));
-			free(compressed_buffer);
-			exit(1);
-		}
-
-		/* 只有当压缩后大小小于原始大小时才使用压缩数据 */
-		if (compressed_size < ck->size) {
-			/* 存储压缩后的数据 */
-			memcpy(c->data + c->meta.data_size, compressed_buffer, compressed_size);
-			me->data_len = compressed_size;
-			me->chunk_len = ck->size;  /* 存储原始大小用于解压 */
-		} else {
-			/* 压缩后反而更大，存储原始数据 */
-			memcpy(c->data + c->meta.data_size, ck->data, ck->size);
-			me->data_len = ck->size;
-			me->chunk_len = 0;  /* 0 表示未压缩 */
-		}
-		free(compressed_buffer);
+		memcpy(c->data + c->meta.data_size, ck->data, ck->size);
+		me->data_len = ck->size;
 		c->meta.data_size += me->data_len;
 
 		g_hash_table_insert(c->meta.map, &me->fp, me);

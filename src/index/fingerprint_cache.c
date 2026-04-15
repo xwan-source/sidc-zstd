@@ -96,7 +96,8 @@ void check_baseid_in_fingerprint_cache_lookup(struct chunk* c) {
     struct containerMeta* cm = lru_cache_lookup_without_update(lru_queue, &c->base_fp);
 	if (cm) {
 		struct metaEntry* me = g_hash_table_lookup(cm->map, &c->base_fp);
-        if(me && (me->flag == 0 || me->flag == 2)) {
+		/* flag != 1 表示是普通块（flag=0），可以作为基块 */
+        if(me && me->flag != 1) {
 			assert(cm->id != -1);
 			c->base_id = cm->id;
 			jcr.base_chunk_in_fcache++;
