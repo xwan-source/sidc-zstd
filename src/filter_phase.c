@@ -182,13 +182,8 @@ static void* filter_thread(void *arg) {
 							jcr.unique_chunk_num++;
 
 						jcr.data_stored += c->delta->size;
-						/* 使用原始大小统计 delta compression，而不是本地压缩后的大小 */
-						int original_size = c->size;
-						if (c->size_after_local_compression > 0 && c->size_after_local_compression > c->size) {
-							original_size = c->size_after_local_compression;
-						}
-						jcr.total_size_for_delta_compression += original_size;
-						jcr.delta_compressed_size += original_size - c->delta->size;
+						jcr.total_size_for_delta_compression += c->size;
+						jcr.delta_compressed_size += c->size - c->delta->size;
 					}
 					/* end of collecting information */
 
@@ -234,21 +229,26 @@ static void* filter_thread(void *arg) {
                 	g_queue_push_tail(storage_buffer.chunks, ck);
 				}
 				else {
-				/* deduplicated chunks, we monitor chunk references */
-				if(c->dup_with_delta)
-					jcr.duplicate_delta_num++;
-				else 
-					jcr.duplicate_chunk_num++;
-				
-				/* 如果该 chunk 被本地压缩过，需要调整 local_compressed_size */
-				if (c->size_after_local_compression > 0 && c->size_after_local_compression > c->size) {
-					/* 这个 chunk 被本地压缩过，需要从 local_compressed_size 中减去节省的大小 */
-					jcr.local_compressed_size -= (c->size_after_local_compression - c->size);
-					jcr.chunk_size_before_local_compression -= c->size_after_local_compression;
-				}
-				
-				jcr.deduplicated_size += c->size;
+			/* deduplicated chunks, we monitor chunk references */
+			if(c->dup_with_delta)
+				jcr.duplicate_delta_num++;
+			else 
+				jcr.duplicate_chunk_num++;
+			
+			/* 如果该 chunk 被本地压缩过，需要调整 local_compressed_size */
+			if (c->size_after_local_compression > 0 && c->size_after_local_compression > c->size) {
+				/* 这个 chunk 被本地压缩过，需要从 local_compressed_size 中减去节省的大小 */
+				jcr.local_compressed_size -= (c->size_after_local_compression - c->size);
+				jcr.chunk_size_before_local_compression -= c->size_after_local_compression;
 			}
+			
+			/* 使用原始大小统计 deduplicated_size */
+			int original_size = c->size;
+			if (c->size_after_local_compression > 0 && c->size_after_local_compression > c->size) {
+				original_size = c->size_after_local_compression;
+			}
+			jcr.deduplicated_size += original_size;
+		}
             }
 			else {
 				/* deduplicated chunks, we monitor chunk references */
@@ -264,7 +264,12 @@ static void* filter_thread(void *arg) {
 					jcr.chunk_size_before_local_compression -= c->size_after_local_compression;
 				}
 				
-				jcr.deduplicated_size += c->size;
+				/* 使用原始大小统计 deduplicated_size */
+				int original_size = c->size;
+				if (c->size_after_local_compression > 0 && c->size_after_local_compression > c->size) {
+					original_size = c->size_after_local_compression;
+				}
+				jcr.deduplicated_size += original_size;
 			}
 
 			//har_monitor_update(c);
