@@ -104,6 +104,11 @@ void init_jcr(char *path) {
 
 	jcr.inversed_delta_size = 0;
 	jcr.target_size_for_inversed_compression = 0;
+
+	/* 本地压缩统计初始化 */
+	jcr.local_compressed_chunk_num = 0;
+	jcr.local_uncompressed_chunk_num = 0;
+	jcr.local_skipped_chunk_num = 0;
 	
     jcr.unproper_delta_comp_num = 0;
 	

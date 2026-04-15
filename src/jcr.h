@@ -157,6 +157,11 @@ struct {
 
 	int64_t inversed_delta_size;
 	int64_t target_size_for_inversed_compression;
+
+	/* 本地压缩统计 */
+	int64_t local_compressed_chunk_num;      /* 被本地压缩的 chunk 数量 */
+	int64_t local_uncompressed_chunk_num;    /* 未被压缩的 chunk 数量（压缩后反而更大或小于阈值） */
+	int64_t local_skipped_chunk_num;         /* 跳过的 chunk 数量（差量块、重复块等） */
 } jcr;
 
 void init_jcr(char *path);

@@ -7,7 +7,7 @@
 static pthread_t local_compression_t;
 
 /* 本地压缩阈值：小于此大小的块不压缩 */
-#define LOCAL_COMPRESSION_MIN_SIZE 256
+#define LOCAL_COMPRESSION_MIN_SIZE 0
 
 /* zstd 压缩级别 */
 #define ZSTD_COMPRESSION_LEVEL 3
@@ -20,6 +20,7 @@ static int compress_chunk(struct chunk* c) {
     /* 只压缩普通数据块（非差量块） */
     if (c->delta != NULL) {
         /* 这是差量块，已经经过差量压缩，不再进行本地压缩 */
+        jcr.local_skipped_chunk_num++;
         return 0;
     }
 
@@ -28,16 +29,19 @@ static int compress_chunk(struct chunk* c) {
         CHECK_CHUNK(c, CHUNK_FILE_END) ||
         CHECK_CHUNK(c, CHUNK_SEGMENT_START) ||
         CHECK_CHUNK(c, CHUNK_SEGMENT_END)) {
+        jcr.local_skipped_chunk_num++;
         return 0;
     }
 
     /* 跳过重复块（去重块） */
     if (CHECK_CHUNK(c, CHUNK_DUPLICATE)) {
+        jcr.local_skipped_chunk_num++;
         return 0;
     }
 
     /* 太小的块不值得压缩 */
     if (c->size < LOCAL_COMPRESSION_MIN_SIZE) {
+        jcr.local_skipped_chunk_num++;
         return 0;
     }
 
@@ -83,9 +87,15 @@ static int compress_chunk(struct chunk* c) {
 
         /* 统计压缩节省的大小 */
         jcr.local_compressed_size += (original_size - compressed_size);
+
+        /* 统计被压缩的 chunk 数量 */
+        jcr.local_compressed_chunk_num++;
     } else {
         /* 压缩后反而更大，不使用压缩数据 */
         free(compressed_buffer);
+
+        /* 统计未被压缩的 chunk 数量 */
+        jcr.local_uncompressed_chunk_num++;
     }
 
     TIMER_END(1, jcr.local_compression_time);

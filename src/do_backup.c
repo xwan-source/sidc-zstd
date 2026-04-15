@@ -375,6 +375,20 @@ void do_backup(char *path) {
             jcr.local_compressed_size);
     fclose(excel_data_size_statistics);
 
+	/* 本地压缩统计 */
+	FILE *excel_local_compression = fopen("excel_local_compression.txt", "a");
+    fprintf(excel_local_compression, "%d\t%lld\t%lld\t%lld\t%lld\t%lld\t%.2f\t%.2f\n", jcr.id + 1,
+			jcr.local_compressed_chunk_num,
+			jcr.local_uncompressed_chunk_num,
+			jcr.local_skipped_chunk_num,
+			jcr.chunk_size_before_local_compression,
+			jcr.local_compressed_size,
+			jcr.chunk_size_before_local_compression > 0 ?
+				(double)jcr.local_compressed_chunk_num / (jcr.local_compressed_chunk_num + jcr.local_uncompressed_chunk_num) * 100 : 0,
+			jcr.chunk_size_before_local_compression > 0 ?
+				(double)jcr.local_compressed_size / jcr.chunk_size_before_local_compression * 100 : 0);
+    fclose(excel_local_compression);
+
 	FILE *excel_throughput = fopen("excel_throughput.txt", "a");
     fprintf(excel_throughput, "%d\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\n", jcr.id + 1,
 			jcr.data_size * 1000000 / jcr.chunk_time / 1024 / 1024,
