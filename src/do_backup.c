@@ -105,6 +105,8 @@ void do_backup(char *path) {
 					0,
 			jcr.data_size
 					/ (double) (jcr.data_size - jcr.deduplicated_size - jcr.local_compressed_size));
+	printf("delta compression stats: chunks=%lld, before=%lld, saved=%lld\n",
+			jcr.delta_compressed_chunk_num, jcr.total_size_for_delta_compression, jcr.delta_compressed_size);
 	printf("data reduction ratio after delta compression: %.4f, %.4f\n",
 			jcr.data_size != 0 ?
 					(jcr.deduplicated_size + jcr.local_compressed_size + jcr.delta_compressed_size)
