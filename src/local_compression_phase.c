@@ -93,9 +93,6 @@ static int compress_chunk(struct chunk* c) {
 
         /* 统计被压缩的 chunk 数量 */
         jcr.local_compressed_chunk_num++;
-        
-        printf("DEBUG: compressed chunk, fp=%02x%02x..., original=%d, compressed=%d\n", 
-               c->fp.hash[0], c->fp.hash[1], original_size, compressed_size);
     } else {
         /* 压缩后反而更大，不使用压缩数据 */
         free(compressed_buffer);
