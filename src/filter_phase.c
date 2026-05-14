@@ -281,13 +281,13 @@ static void* filter_thread(void *arg) {
         		assert(cp.id >= 0);
         		memcpy(&cp.fp, &c->fp, sizeof(fingerprint));
         		/* 
-        		 * 如果 chunk 被本地压缩了，size_after_local_compression 存储的是原始大小
+        		 * 如果 chunk 被本地压缩了，original_size_before_compression 存储的是原始大小
         		 * 否则 c->size 就是原始大小
         		 */
-        		if (c->size_after_local_compression > 0) {
-        			cp.size = c->size_after_local_compression;
+        		if (c->original_size_before_compression > 0) {
+        			cp.size = c->original_size_before_compression;
         			printf("DEBUG: compressed chunk, c->size=%d, original=%d, recipe_size=%d\n", 
-        			       c->size, c->size_after_local_compression, cp.size);
+        			       c->size, c->original_size_before_compression, cp.size);
         		} else {
         			cp.size = c->size;
         			printf("DEBUG: uncompressed chunk, c->size=%d, recipe_size=%d\n", 

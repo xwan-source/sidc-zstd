@@ -371,7 +371,7 @@ struct chunk {
 	int32_t inverse_encoded;	/* if the chunk has been inversted encoded */
 
 	unsigned char* local_compressed_contents;
-	int32_t size_after_local_compression;
+	int32_t original_size_before_compression;  /* 本地压缩前的原始大小，0表示未压缩 */
 
 	int32_t target_size_for_inversed_compression;
 

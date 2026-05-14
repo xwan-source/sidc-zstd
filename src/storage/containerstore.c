@@ -678,11 +678,11 @@ int add_chunk_to_container(struct container* c, struct chunk* ck) {
 
 		/* 
 		 * 检查是否经过本地压缩
-		 * size_after_local_compression > 0 表示数据已被压缩，存储的是原始大小
+		 * original_size_before_compression > 0 表示数据已被压缩，存储的是原始大小
 		 */
-		if (ck->size_after_local_compression > 0) {
+		if (ck->original_size_before_compression > 0) {
 			/* 数据已被压缩，chunk_len 存储原始大小 */
-			me->chunk_len = ck->size_after_local_compression;
+			me->chunk_len = ck->original_size_before_compression;
 		} else {
 			/* 数据未被压缩 */
 			me->chunk_len = 0;

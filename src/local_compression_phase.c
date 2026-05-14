@@ -61,8 +61,8 @@ static int compress_chunk(struct chunk* c) {
         c->data = compressed_buffer;
         c->size = compressed_size;
 
-        /* 保存压缩后的大小（用于存储时识别） */
-        c->size_after_local_compression = original_size;
+        /* 保存原始大小（用于存储时识别已压缩） */
+        c->original_size_before_compression = original_size;
 
         /* 统计 */
         jcr.local_compressed_size += (original_size - compressed_size);
@@ -70,7 +70,7 @@ static int compress_chunk(struct chunk* c) {
     } else {
         /* 压缩后反而更大，不使用压缩数据 */
         free(compressed_buffer);
-        c->size_after_local_compression = 0;  /* 0 表示未压缩 */
+        c->original_size_before_compression = 0;  /* 0 表示未压缩 */
         jcr.local_uncompressed_chunk_num++;
     }
 

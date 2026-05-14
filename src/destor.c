@@ -406,7 +406,7 @@ struct chunk* new_chunk(int32_t size) {
     ck->delta_size = 0;
     ck->delta_compressed = 0;
 	ck->inverse_encoded = 0;
-	ck->size_after_local_compression = 0;
+	ck->original_size_before_compression = 0;
 	ck->target_size_for_inversed_compression = 0;
 
 	ck->stored_as_delta = -1;
