@@ -73,8 +73,12 @@ static void* lru_restore_thread(void *arg) {
         rc = get_chunk_in_container(con, &c->fp);
 
         if(c->size != rc->size || rc->size == 0) {
-                printf("expect size %d, but the real size %d, delta chunk: %s\n",
+                printf("RESTORE DEBUG: recipe size %d, container size %d, delta: %s, fp=",
                                         c->size, rc->size, rc->delta ? "yes" : "no");
+                char code[41];
+                hash2code(c->fp, code);
+                code[40] = 0;
+                printf("%s\n", code);
 		        assert(c->size == rc->size);
                 assert(rc->size != 0);
 	        }

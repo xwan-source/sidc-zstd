@@ -114,6 +114,9 @@ struct {
 	int64_t total_size_for_local_compression;
 
 	int64_t chunk_size_before_local_compression;
+	int64_t local_compressed_chunk_num;
+	int64_t local_uncompressed_chunk_num;
+	int64_t local_skipped_chunk_num;
 
 	double mysql_lookup_time;
 	int64_t mysql_lookup_times;

@@ -111,6 +111,9 @@ void init_jcr(char *path) {
 	jcr.total_size_for_delta_compression = 0;
 
 	jcr.chunk_size_before_local_compression = 0;
+	jcr.local_compressed_chunk_num = 0;
+	jcr.local_uncompressed_chunk_num = 0;
+	jcr.local_skipped_chunk_num = 0;
 	
     jcr.sketch_replace_time = 0;
     jcr.sketch_index_item_num = 0;

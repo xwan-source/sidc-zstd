@@ -280,10 +280,22 @@ static void* filter_thread(void *arg) {
         		cp.id = c->id;
         		assert(cp.id >= 0);
         		memcpy(&cp.fp, &c->fp, sizeof(fingerprint));
-        		cp.size = c->size;
+        		/* 
+        		 * 如果 chunk 被本地压缩了，size_after_local_compression 存储的是原始大小
+        		 * 否则 c->size 就是原始大小
+        		 */
+        		if (c->size_after_local_compression > 0) {
+        			cp.size = c->size_after_local_compression;
+        			printf("DEBUG: compressed chunk, c->size=%d, original=%d, recipe_size=%d\n", 
+        			       c->size, c->size_after_local_compression, cp.size);
+        		} else {
+        			cp.size = c->size;
+        			printf("DEBUG: uncompressed chunk, c->size=%d, recipe_size=%d\n", 
+        			       c->size, cp.size);
+        		}
         		append_n_chunk_pointers(jcr.bv, &cp ,1);
         		r->chunknum++;
-        		r->filesize += c->size;
+        		r->filesize += cp.size;
         	}else{
         		assert(CHECK_CHUNK(c,CHUNK_FILE_END));
         		append_recipe_meta(jcr.bv, r);

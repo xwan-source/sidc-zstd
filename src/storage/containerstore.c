@@ -5,7 +5,7 @@
 #include "../destor.h"
 #include "../common.h"
 #include "../index/index.h"
-//#include <zstd.h>
+#include <zstd.h>
 
 
 static int64_t container_count = 0;
@@ -147,8 +147,10 @@ void write_container(struct container* c) {
 		ser_bytes(&me->fp, sizeof(fingerprint));						// 20B
 		ser_bytes(&me->offset, sizeof(int32_t));						// 4B
 		ser_bytes(&me->data_len, sizeof(int32_t));						// 4B
+		ser_bytes(&me->chunk_len, sizeof(int32_t));						// 4B
+		ser_bytes(&me->flag, sizeof(char));							// 1B
 		ser_bytes(&me->base_fp, sizeof(fingerprint));					// 20B
-		ser_bytes(&me->base_size, sizeof(int32_t));						// 4B
+		ser_bytes(&me->base_size, sizeof(int32_t));					// 4B
 		ser_bytes(&me->sf1, sizeof(uint64_t));							// 8B
 		ser_bytes(&me->sf2, sizeof(uint64_t));							// 8B
 		ser_bytes(&me->sf3, sizeof(uint64_t));							// 8B
@@ -232,19 +234,20 @@ struct containerMeta* load_container_meta_by_id(containerid id) {
 		unser_bytes(&me->fp, sizeof(fingerprint));						// 20B
 		unser_bytes(&me->offset, sizeof(int32_t));						// 4B
 		unser_bytes(&me->data_len, sizeof(int32_t));					// 4B
+		unser_bytes(&me->chunk_len, sizeof(int32_t));					// 4B
+		unser_bytes(&me->flag, sizeof(char));							// 1B
 		unser_bytes(&me->base_fp, sizeof(fingerprint));					// 20B
 		unser_bytes(&me->base_size, sizeof(int32_t));					// 4B
 		unser_bytes(&me->sf1, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf2, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf3, sizeof(uint64_t));						// 8B
 
-		me->flag = 0;
-        me->delta_size = -1;
+		me->delta_size = -1;
+		me->base_id = -1;
 
-		if (bitmap[i>>3] & (1 << (i & 7))) {
+		if (me->flag) {
 			/* it is a delta */
-			me->flag = 1;
-			me->delta_size = me->data_len - 12;
+			me->delta_size = me->data_len - sizeof(int32_t) - sizeof(containerid);
 		}
 
 		g_hash_table_insert(cm->map, &me->fp, me);
@@ -299,17 +302,18 @@ struct container* load_container_by_id(containerid id) {
 		unser_bytes(&me->fp, sizeof(fingerprint));						// 20B
 		unser_bytes(&me->offset, sizeof(int32_t));						// 4B
 		unser_bytes(&me->data_len, sizeof(int32_t));					// 4B
+		unser_bytes(&me->chunk_len, sizeof(int32_t));					// 4B
+		unser_bytes(&me->flag, sizeof(char));							// 1B
 		unser_bytes(&me->base_fp, sizeof(fingerprint));					// 20B
 		unser_bytes(&me->base_size, sizeof(int32_t));					// 4B
 		unser_bytes(&me->sf1, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf2, sizeof(uint64_t));						// 8B
 		unser_bytes(&me->sf3, sizeof(uint64_t));						// 8B
 
-		me->flag = 0;
 		me->delta_size = -1;
-		if (bitmap[i >> 3] & (1 << (i & 7))){
+		me->base_id = -1;
+		if (me->flag){
 			/* it is a delta */
-			me->flag = 1;
 			me->delta_size = me->data_len - sizeof(int32_t) - sizeof(containerid);
 		}
 
@@ -513,15 +517,50 @@ struct chunk* get_chunk_in_container(struct container* c, fingerprint *fp) {
 		ck->base_id = ck->delta->base_id;
 	}
 	else {
+		/* Normal chunk */
+		if (me->chunk_len > 0) {
+			/* 数据已被压缩，需要解压缩 */
+			int32_t compressed_size = me->data_len;
+			int32_t original_size = me->chunk_len;
 
-		int32_t chunk_size = me->data_len;
-		ck = new_chunk(chunk_size);
-	
-		unser_declare;
-		unser_begin(c->data + me->offset, 0);
-		ck = new_chunk(chunk_size);
-		unser_bytes(ck->data, chunk_size);
-		unser_end(c->data + me->offset, chunk_size);
+			printf("CONTAINER DEBUG: decompressing chunk, compressed=%d, original=%d\n",
+			       compressed_size, original_size);
+
+			/* 分配解压缓冲区 */
+			unsigned char* decompressed_data = (unsigned char*)malloc(original_size);
+			if (decompressed_data == NULL) {
+				fprintf(stderr, "Failed to allocate memory for decompression\n");
+				exit(1);
+			}
+
+			/* 使用 zstd 解压 */
+			size_t const decompressed_size = ZSTD_decompress(decompressed_data, original_size,
+			                                                  c->data + me->offset, compressed_size);
+			if (ZSTD_isError(decompressed_size)) {
+				fprintf(stderr, "ZSTD decompression failed: %s\n", ZSTD_getErrorName(decompressed_size));
+				free(decompressed_data);
+				exit(1);
+			}
+
+			printf("CONTAINER DEBUG: decompressed size=%zu\n", decompressed_size);
+
+			/* 创建 chunk */
+			ck = new_chunk(original_size);
+			memcpy(ck->data, decompressed_data, original_size);
+			free(decompressed_data);
+		} else {
+			/* 数据未被压缩 */
+			int32_t chunk_size = me->data_len;
+
+			printf("CONTAINER DEBUG: uncompressed chunk, size=%d\n", chunk_size);
+
+			ck = new_chunk(chunk_size);
+		
+			unser_declare;
+			unser_begin(c->data + me->offset, 0);
+			unser_bytes(ck->data, chunk_size);
+			unser_end(c->data + me->offset, chunk_size);
+		}
 	}
 	memcpy(&ck->fp, fp, sizeof(fingerprint));
 	ck->id = c->meta.id;
@@ -537,34 +576,49 @@ struct chunk* get_base_chunk_in_container(struct container* c, fingerprint *fp) 
     assert(me->flag == 0);
 
 	struct chunk* ck = NULL;
-	/*
-	char code[41];
-	hash2code(*fp, code);
-	code[40] = 0;
-	*/
-	//printf("cid: %d, offset: %d, a base, data lenght: %d\n", c->meta.id, me->offset, me->data_len);
-	/*
-	int32_t rSize = ZSTD_getFrameContentSize(c->data + me->offset, me->data_len);
-	assert(rSize != ZSTD_CONTENTSIZE_ERROR);
-    assert(rSize != ZSTD_CONTENTSIZE_UNKNOWN);
-	unsigned char* restoreBuffer = malloc(rSize);
 
-	int32_t dSize = ZSTD_decompress(restoreBuffer, rSize, 
-						c->data + me->offset, me->data_len);
-	assert(!ZSTD_isError(dSize));
-	*/
-	ck = new_chunk(me->data_len);
-	
-	unser_declare;
-	unser_begin(c->data + me->offset, 0);
-	unser_bytes(ck->data, me->data_len);
-	unser_end(c->data + me->offset, me->data_len);
+	if (me->chunk_len > 0) {
+		/* 数据已被压缩，需要解压缩 */
+		int32_t compressed_size = me->data_len;
+		int32_t original_size = me->chunk_len;
+
+		/* 分配解压缓冲区 */
+		unsigned char* decompressed_data = (unsigned char*)malloc(original_size);
+		if (decompressed_data == NULL) {
+			fprintf(stderr, "Failed to allocate memory for base chunk decompression\n");
+			exit(1);
+		}
+
+		/* 使用 zstd 解压 */
+		size_t const decompressed_size = ZSTD_decompress(decompressed_data, original_size,
+		                                                  c->data + me->offset, compressed_size);
+		if (ZSTD_isError(decompressed_size)) {
+			fprintf(stderr, "ZSTD decompression failed for base chunk: %s\n", ZSTD_getErrorName(decompressed_size));
+			free(decompressed_data);
+			exit(1);
+		}
+
+		/* 创建 chunk */
+		ck = new_chunk(original_size);
+		memcpy(ck->data, decompressed_data, original_size);
+		free(decompressed_data);
+
+		ck->target_size_for_inversed_compression = original_size;
+	} else {
+		/* 数据未被压缩 */
+		ck = new_chunk(me->data_len);
+		
+		unser_declare;
+		unser_begin(c->data + me->offset, 0);
+		unser_bytes(ck->data, me->data_len);
+		unser_end(c->data + me->offset, me->data_len);
+
+		ck->target_size_for_inversed_compression = me->data_len;
+	}
 	
 	memcpy(&ck->fp, fp, sizeof(fingerprint));
 	ck->id = c->meta.id;
 	assert(ck->id != -1);
-
-	ck->target_size_for_inversed_compression = me->data_len;
 
 	return ck;
 }
@@ -610,8 +664,6 @@ int add_chunk_to_container(struct container* c, struct chunk* ck) {
 	}
     if (!ck->delta) {
 		/* store as a normal chunk */
-
-		//assert(ck->local_compressed_contents);
 		struct metaEntry* me = (struct metaEntry*) malloc(sizeof(struct metaEntry));
 		memcpy(&me->fp, &ck->fp, sizeof(fingerprint));
 		me->offset = c->meta.data_size;
@@ -623,6 +675,18 @@ int add_chunk_to_container(struct container* c, struct chunk* ck) {
 		me->sf1 = ck->sketches->sf1;
 		me->sf2 = ck->sketches->sf2;
 		me->sf3 = ck->sketches->sf3;
+
+		/* 
+		 * 检查是否经过本地压缩
+		 * size_after_local_compression > 0 表示数据已被压缩，存储的是原始大小
+		 */
+		if (ck->size_after_local_compression > 0) {
+			/* 数据已被压缩，chunk_len 存储原始大小 */
+			me->chunk_len = ck->size_after_local_compression;
+		} else {
+			/* 数据未被压缩 */
+			me->chunk_len = 0;
+		}
 
 		memcpy(c->data + c->meta.data_size, ck->data, ck->size);
 		me->data_len = ck->size;
